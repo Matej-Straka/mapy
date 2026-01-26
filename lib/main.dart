@@ -62,7 +62,7 @@ class _MyHomePageState extends State<MyHomePage> {
 
     final route = await valhalla.getRoute(
       locations: [
-        ValhallaLocation(lat: 48.137154, lon: 11.576124), // Munich
+        ValhallaLocation(lat: 48.137154, lon: 15.576124), // Munich
         ValhallaLocation(lat: 48.208176, lon: 16.373819), // Vienna
       ],
       profile: ValhallaProfile.bicycle,
@@ -85,18 +85,38 @@ class _MyHomePageState extends State<MyHomePage> {
     // The Flutter framework has been optimized to make rerunning build methods
     // fast, so that you can just rebuild anything that needs updating rather
     // than having to individually change instances of widgets.
-    return FlutterMap(
-      options: MapOptions(
-        initialCenter: LatLng(49.066, 17.459),
-        initialZoom: 16,
-      ),
-      children: [
-        TileLayer(
-          urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-          userAgentPackageName: 'com.example.myapp',
+    return Scaffold(
+      body: FlutterMap(
+        options: MapOptions(
+          initialCenter: LatLng(49.066, 17.459),
+          initialZoom: 16,
         ),
-        ElevatedButton(onPressed: calc(), child: const Text('test')),
-      ],
+        children: [
+          TileLayer(
+            urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+            userAgentPackageName: 'com.example.myapp',
+          ),
+          Positioned(
+            bottom: 20,
+            left: 20,
+            child: ElevatedButton(
+              onPressed: () {
+                calc();
+              },
+              child: const Icon(Icons.menu),
+              style: TextButton.styleFrom(shape: CircleBorder()),
+            ),
+          ),
+        ],
+      ),
+      drawer: const NavigationDrawer(),
     );
   }
+}
+
+class NavigationDrawer extends StatelessWidget {
+  const NavigationDrawer({Key? key}) : super(key: key);
+
+  @override
+  Widget build(BuildContext context) => Drawer(child: SingleChildScrollView());
 }
