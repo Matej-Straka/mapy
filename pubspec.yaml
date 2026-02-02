@@ -37,6 +37,7 @@ dependencies:
   flutter_map: ^8.2.2
   osrm: ^0.0.8
   routing_client_dart: ^1.0.8
+  universal_html: ^2.3.0
 
 dev_dependencies:
   flutter_test:

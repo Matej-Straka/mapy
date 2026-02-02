@@ -1,9 +1,13 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
+import 'dart:math' show Point;
 import 'valhalla_service.dart';
+import 'package:universal_html/html.dart' as html;
 
 void main() {
+  html.document.onContextMenu.listen((event) => event.preventDefault());
   runApp(const MyApp());
 }
 
@@ -31,7 +35,7 @@ class MyApp extends StatelessWidget {
         //
         // This works for code too, not just values: Most code changes can be
         // tested with just a hot reload.
-        colorScheme: .fromSeed(seedColor: Colors.deepPurple),
+        colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
       ),
       home: const MyHomePage(title: 'Flutter Demo Home Page'),
     );
@@ -57,6 +61,9 @@ class MyHomePage extends StatefulWidget {
 }
 
 class _MyHomePageState extends State<MyHomePage> {
+  final List<Marker> _markers = [];
+  final MapController _mapController = MapController();
+
   calc() async {
     final valhalla = ValhallaService();
 
@@ -77,6 +84,73 @@ class _MyHomePageState extends State<MyHomePage> {
     print("Time: ${route['trip']['summary']['time'] / 60} minutes");
   }
 
+  void _showMapContextMenu(
+    BuildContext context,
+    Offset position,
+    LatLng coordinates,
+  ) {
+    final RenderBox overlay =
+        Overlay.of(context).context.findRenderObject() as RenderBox;
+
+    showMenu(
+      context: context,
+      position: RelativeRect.fromLTRB(
+        position.dx,
+        position.dy,
+        overlay.size.width - position.dx,
+        overlay.size.height - position.dy,
+      ),
+      items: [
+        PopupMenuItem(
+          child: const Text('Add Marker'),
+          onTap: () {
+            setState(() {
+              _markers.add(
+                Marker(
+                  point: coordinates,
+                  width: 40,
+                  height: 40,
+                  child: const Icon(
+                    Icons.location_on,
+                    color: Colors.red,
+                    size: 40,
+                  ),
+                ),
+              );
+            });
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text(
+                  'Marker added at ${coordinates.latitude.toStringAsFixed(4)}, ${coordinates.longitude.toStringAsFixed(4)}',
+                ),
+              ),
+            );
+          },
+        ),
+        PopupMenuItem(
+          child: const Text('Get Directions'),
+          onTap: () {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Getting directions...')),
+            );
+          },
+        ),
+        PopupMenuItem(
+          child: const Text('Share Location'),
+          onTap: () {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text(
+                  'Location: ${coordinates.latitude}, ${coordinates.longitude}',
+                ),
+              ),
+            );
+          },
+        ),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     // This method is rerun every time setState is called, for instance as done
@@ -86,30 +160,45 @@ class _MyHomePageState extends State<MyHomePage> {
     // fast, so that you can just rebuild anything that needs updating rather
     // than having to individually change instances of widgets.
     return Scaffold(
-      body: FlutterMap(
-        options: MapOptions(
-          initialCenter: LatLng(49.066, 17.459),
-          initialZoom: 16,
-        ),
+      drawer: const NavigationDrawer(),
+      body: Stack(
         children: [
-          TileLayer(
-            urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-            userAgentPackageName: 'com.example.myapp',
+          GestureDetector(
+            onSecondaryTap: () {
+              // Consume to prevent default menu
+            },
+            child: FlutterMap(
+              mapController: _mapController,
+              options: MapOptions(
+                initialCenter: LatLng(49.066, 17.459),
+                initialZoom: 16,
+                onSecondaryTap: (tapPosition, latLng) {
+                  _showMapContextMenu(context, tapPosition.global, latLng);
+                },
+              ),
+              children: [
+                TileLayer(
+                  urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                  userAgentPackageName: 'com.example.myapp',
+                ),
+                MarkerLayer(markers: _markers),
+              ],
+            ),
           ),
           Positioned(
-            bottom: 20,
-            left: 20,
-            child: ElevatedButton(
-              onPressed: () {
-                calc();
+            bottom: 16,
+            left: 16,
+            child: Builder(
+              builder: (BuildContext context) {
+                return ElevatedButton(
+                  onPressed: () => Scaffold.of(context).openDrawer(),
+                  child: const Icon(Icons.menu),
+                );
               },
-              child: const Icon(Icons.menu),
-              style: TextButton.styleFrom(shape: CircleBorder()),
             ),
           ),
         ],
       ),
-      drawer: const NavigationDrawer(),
     );
   }
 }
@@ -118,5 +207,30 @@ class NavigationDrawer extends StatelessWidget {
   const NavigationDrawer({Key? key}) : super(key: key);
 
   @override
-  Widget build(BuildContext context) => Drawer(child: SingleChildScrollView());
+  Widget build(BuildContext context) => Drawer(
+    child: ListView(
+      // Important: Remove any padding from the ListView.
+      padding: EdgeInsets.zero,
+      children: [
+        const DrawerHeader(
+          decoration: BoxDecoration(color: Colors.blue),
+          child: Text('Drawer Header'),
+        ),
+        ListTile(
+          title: const Text('Item 1'),
+          onTap: () {
+            // Update the state of the app.
+            // ...
+          },
+        ),
+        ListTile(
+          title: const Text('Item 2'),
+          onTap: () {
+            // Update the state of the app.
+            // ...
+          },
+        ),
+      ],
+    ),
+  );
 }
