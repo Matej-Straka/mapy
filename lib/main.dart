@@ -204,6 +204,9 @@ class _MyHomePageState extends State<MyHomePage> {
 }
 
 class NavigationDrawer extends StatelessWidget {
+  void onChanged(dynamic value) {
+    // Handle radio button change
+  }
   const NavigationDrawer({Key? key}) : super(key: key);
 
   @override
@@ -214,17 +217,53 @@ class NavigationDrawer extends StatelessWidget {
       children: [
         const DrawerHeader(
           decoration: BoxDecoration(color: Colors.blue),
-          child: Text('Drawer Header'),
+          child: Text('Navigace'),
         ),
         ListTile(
-          title: const Text('Item 1'),
+          title: const TextField(
+            decoration: InputDecoration(labelText: 'Počáteční bod trasy: '),
+          ),
           onTap: () {
             // Update the state of the app.
             // ...
           },
         ),
         ListTile(
-          title: const Text('Item 2'),
+          title: const TextField(
+            decoration: InputDecoration(labelText: 'Koncový bod trasy: '),
+          ),
+          onTap: () {
+            // Update the state of the app.
+            // ...
+          },
+        ),
+        ListTile(
+          title: const Text('Mód přepravy:'),
+          subtitle: Column(
+            children: [
+              RadioListTile<String>(
+                title: const Text('Automobil'),
+                value: 'Automobil',
+                groupValue: null,
+                onChanged: (value) => onChanged(value),
+              ),
+              RadioListTile<String>(
+                title: const Text('Kolo'),
+                value: 'Kolo',
+                groupValue: null,
+                onChanged: (value) => onChanged(value),
+              ),
+              RadioListTile<String>(
+                title: const Text('Chůze'),
+                value: 'Chůze',
+                groupValue: null,
+                onChanged: (value) => onChanged(value),
+              ),
+            ],
+          ),
+        ),
+        ListTile(
+          title: const Text('Vypočítat trasu'),
           onTap: () {
             // Update the state of the app.
             // ...
