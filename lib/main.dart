@@ -2,9 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
-import 'dart:math' show Point;
 import 'valhalla_service.dart';
 import 'package:universal_html/html.dart' as html;
+import 'package:google_polyline_algorithm/google_polyline_algorithm.dart';
 
 void main() {
   html.document.onContextMenu.listen((event) => event.preventDefault());
@@ -63,16 +63,24 @@ class MyHomePage extends StatefulWidget {
 class _MyHomePageState extends State<MyHomePage> {
   final List<Marker> _markers = [];
   final MapController _mapController = MapController();
+  List<LatLng> _routePoints = [];
 
-  calc() async {
+  final TextEditingController startPointController = TextEditingController();
+  final TextEditingController endPointController = TextEditingController();
+
+  calc(String mode) async {
     final valhalla = ValhallaService();
 
     final route = await valhalla.getRoute(
       locations: [
-        ValhallaLocation(lat: 48.137154, lon: 15.576124), // Munich
-        ValhallaLocation(lat: 48.208176, lon: 16.373819), // Vienna
+        if (startPointController.text.isNotEmpty)
+          ValhallaLocation.fromString(startPointController.text),
+        if (endPointController.text.isNotEmpty)
+          ValhallaLocation.fromString(endPointController.text),
       ],
-      profile: ValhallaProfile.bicycle,
+      profile: ValhallaProfile.values.firstWhere(
+        (p) => p.toString().split('.').last == mode,
+      ),
       profileOptions: {
         "cycling_speed": 22.0,
         "use_roads": 0.3,
@@ -82,6 +90,18 @@ class _MyHomePageState extends State<MyHomePage> {
 
     print("Distance: ${route['trip']['summary']['length']} km");
     print("Time: ${route['trip']['summary']['time'] / 60} minutes");
+    String encodedShape = route['trip']['legs'][0]['shape'];
+    setState(() {
+      _routePoints = decodeValhallaShape(encodedShape);
+    });
+  }
+
+  List<LatLng> decodeValhallaShape(String encoded) {
+    final decoded = decodePolyline(encoded, accuracyExponent: 6);
+
+    return decoded
+        .map((point) => LatLng(point[0].toDouble(), point[1].toDouble()))
+        .toList();
   }
 
   void _showMapContextMenu(
@@ -128,11 +148,17 @@ class _MyHomePageState extends State<MyHomePage> {
           },
         ),
         PopupMenuItem(
-          child: const Text('Get Directions'),
+          child: const Text('Startovni bod trasy'),
           onTap: () {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('Getting directions...')),
-            );
+            startPointController.text =
+                '${coordinates.latitude.toStringAsFixed(4)}, ${coordinates.longitude.toStringAsFixed(4)}';
+          },
+        ),
+        PopupMenuItem(
+          child: const Text('Cílový bod trasy'),
+          onTap: () {
+            endPointController.text =
+                '${coordinates.latitude.toStringAsFixed(4)}, ${coordinates.longitude.toStringAsFixed(4)}';
           },
         ),
         PopupMenuItem(
@@ -160,7 +186,11 @@ class _MyHomePageState extends State<MyHomePage> {
     // fast, so that you can just rebuild anything that needs updating rather
     // than having to individually change instances of widgets.
     return Scaffold(
-      drawer: const NavigationDrawer(),
+      drawer: NavigationDrawer(
+        startPointController: startPointController,
+        endPointController: endPointController,
+        onCalculateRoute: (String mode) => calc(mode),
+      ),
       body: Stack(
         children: [
           GestureDetector(
@@ -182,6 +212,16 @@ class _MyHomePageState extends State<MyHomePage> {
                   userAgentPackageName: 'com.example.myapp',
                 ),
                 MarkerLayer(markers: _markers),
+                if (_routePoints.isNotEmpty)
+                  PolylineLayer(
+                    polylines: [
+                      Polyline(
+                        points: _routePoints,
+                        strokeWidth: 4.0,
+                        color: Colors.red,
+                      ),
+                    ],
+                  ),
               ],
             ),
           ),
@@ -203,11 +243,24 @@ class _MyHomePageState extends State<MyHomePage> {
   }
 }
 
-class NavigationDrawer extends StatelessWidget {
-  void onChanged(dynamic value) {
-    // Handle radio button change
-  }
-  const NavigationDrawer({Key? key}) : super(key: key);
+class NavigationDrawer extends StatefulWidget {
+  final TextEditingController startPointController;
+  final TextEditingController endPointController;
+  final Function(String) onCalculateRoute;
+
+  const NavigationDrawer({
+    super.key,
+    required this.startPointController,
+    required this.endPointController,
+    required this.onCalculateRoute,
+  });
+
+  @override
+  State<NavigationDrawer> createState() => _NavigationDrawerState();
+}
+
+class _NavigationDrawerState extends State<NavigationDrawer> {
+  String? _selectedTransportMode = 'Automobil';
 
   @override
   Widget build(BuildContext context) => Drawer(
@@ -220,8 +273,11 @@ class NavigationDrawer extends StatelessWidget {
           child: Text('Navigace'),
         ),
         ListTile(
-          title: const TextField(
-            decoration: InputDecoration(labelText: 'Počáteční bod trasy: '),
+          title: TextField(
+            controller: widget.startPointController,
+            decoration: const InputDecoration(
+              labelText: 'Počáteční bod trasy: ',
+            ),
           ),
           onTap: () {
             // Update the state of the app.
@@ -229,8 +285,9 @@ class NavigationDrawer extends StatelessWidget {
           },
         ),
         ListTile(
-          title: const TextField(
-            decoration: InputDecoration(labelText: 'Koncový bod trasy: '),
+          title: TextField(
+            controller: widget.endPointController,
+            decoration: const InputDecoration(labelText: 'Koncový bod trasy: '),
           ),
           onTap: () {
             // Update the state of the app.
@@ -243,21 +300,33 @@ class NavigationDrawer extends StatelessWidget {
             children: [
               RadioListTile<String>(
                 title: const Text('Automobil'),
-                value: 'Automobil',
-                groupValue: null,
-                onChanged: (value) => onChanged(value),
+                value: 'auto',
+                groupValue: _selectedTransportMode,
+                onChanged: (value) {
+                  setState(() {
+                    _selectedTransportMode = value;
+                  });
+                },
               ),
               RadioListTile<String>(
                 title: const Text('Kolo'),
-                value: 'Kolo',
-                groupValue: null,
-                onChanged: (value) => onChanged(value),
+                value: 'bicycle',
+                groupValue: _selectedTransportMode,
+                onChanged: (value) {
+                  setState(() {
+                    _selectedTransportMode = value;
+                  });
+                },
               ),
               RadioListTile<String>(
                 title: const Text('Chůze'),
-                value: 'Chůze',
-                groupValue: null,
-                onChanged: (value) => onChanged(value),
+                value: 'pedestrian',
+                groupValue: _selectedTransportMode,
+                onChanged: (value) {
+                  setState(() {
+                    _selectedTransportMode = value;
+                  });
+                },
               ),
             ],
           ),
@@ -265,8 +334,7 @@ class NavigationDrawer extends StatelessWidget {
         ListTile(
           title: const Text('Vypočítat trasu'),
           onTap: () {
-            // Update the state of the app.
-            // ...
+            widget.onCalculateRoute(_selectedTransportMode ?? 'auto');
           },
         ),
       ],

@@ -11,6 +11,18 @@ class ValhallaLocation {
 
   ValhallaLocation({required this.lat, required this.lon});
 
+  /// Create a ValhallaLocation from a comma-separated string (e.g., "49.066, 17.459")
+  factory ValhallaLocation.fromString(String coordString) {
+    final parts = coordString.split(',').map((s) => s.trim()).toList();
+    if (parts.length != 2) {
+      throw FormatException('Invalid coordinate format. Expected "lat, lon"');
+    }
+    return ValhallaLocation(
+      lat: double.parse(parts[0]),
+      lon: double.parse(parts[1]),
+    );
+  }
+
   Map<String, dynamic> toJson() => {"lat": lat, "lon": lon};
 }
 
@@ -28,8 +40,6 @@ class ValhallaService {
       case ValhallaProfile.pedestrian:
         return 'pedestrian';
       case ValhallaProfile.auto:
-        return 'auto';
-      default:
         return 'auto';
     }
   }
