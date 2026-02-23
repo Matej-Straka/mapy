@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_map/flutter_map.dart';
@@ -5,6 +7,13 @@ import 'package:latlong2/latlong.dart';
 import 'valhalla_service.dart';
 import 'package:universal_html/html.dart' as html;
 import 'package:google_polyline_algorithm/google_polyline_algorithm.dart';
+
+class SpeedSettings {
+  double walkingSpeed; // km/h
+  double cyclingSpeed; // km/h
+
+  SpeedSettings({this.walkingSpeed = 5.0, this.cyclingSpeed = 22.0});
+}
 
 void main() {
   html.document.onContextMenu.listen((event) => event.preventDefault());
@@ -62,14 +71,42 @@ class MyHomePage extends StatefulWidget {
 
 class _MyHomePageState extends State<MyHomePage> {
   final List<Marker> _markers = [];
+  late Marker _startMarker = Marker(
+    point: LatLng(0, 0),
+    width: 40,
+    height: 40,
+    child: const Icon(Icons.location_on, color: Colors.green, size: 40),
+  );
+  late Marker _endMarker = Marker(
+    point: LatLng(0, 0),
+    width: 40,
+    height: 40,
+    child: const Icon(Icons.location_on, color: Colors.red, size: 40),
+  );
   final MapController _mapController = MapController();
   List<LatLng> _routePoints = [];
 
   final TextEditingController startPointController = TextEditingController();
   final TextEditingController endPointController = TextEditingController();
 
+  late SpeedSettings _speedSettings;
+
+  @override
+  void initState() {
+    super.initState();
+    _speedSettings = SpeedSettings();
+  }
+
   calc(String mode) async {
     final valhalla = ValhallaService();
+
+    Map<String, dynamic> profileOptions = {"use_roads": 0.3, "use_trails": 0.8};
+
+    if (mode == 'bicycle') {
+      profileOptions["cycling_speed"] = _speedSettings.cyclingSpeed;
+    } else if (mode == 'pedestrian') {
+      profileOptions["walking_speed"] = _speedSettings.walkingSpeed;
+    }
 
     final route = await valhalla.getRoute(
       locations: [
@@ -81,19 +118,69 @@ class _MyHomePageState extends State<MyHomePage> {
       profile: ValhallaProfile.values.firstWhere(
         (p) => p.toString().split('.').last == mode,
       ),
-      profileOptions: {
-        "cycling_speed": 22.0,
-        "use_roads": 0.3,
-        "use_trails": 0.8,
-      },
+      profileOptions: profileOptions,
     );
-
-    print("Distance: ${route['trip']['summary']['length']} km");
-    print("Time: ${route['trip']['summary']['time'] / 60} minutes");
+    print(route);
     String encodedShape = route['trip']['legs'][0]['shape'];
     setState(() {
       _routePoints = decodeValhallaShape(encodedShape);
     });
+    return route;
+  }
+
+  export(String mode, {String exportFormat = 'gpx'}) async {
+    final valhalla = ValhallaService();
+
+    Map<String, dynamic> profileOptions = {"use_roads": 0.3, "use_trails": 0.8};
+
+    if (mode == 'bicycle') {
+      profileOptions["cycling_speed"] = _speedSettings.cyclingSpeed;
+    } else if (mode == 'pedestrian') {
+      profileOptions["walking_speed"] = _speedSettings.walkingSpeed;
+    }
+
+    try {
+      final content = await valhalla.getRoute(
+        locations: [
+          if (startPointController.text.isNotEmpty)
+            ValhallaLocation.fromString(startPointController.text),
+          if (endPointController.text.isNotEmpty)
+            ValhallaLocation.fromString(endPointController.text),
+        ],
+        profile: ValhallaProfile.values.firstWhere(
+          (p) => p.toString().split('.').last == mode,
+        ),
+        profileOptions: profileOptions,
+        format: exportFormat,
+      );
+
+      if (exportFormat == 'gpx') {
+        final bytes = utf8.encode(content);
+        final blob = html.Blob([bytes], 'application/gpx+xml');
+        final url = html.Url.createObjectUrlFromBlob(blob);
+        final anchor = html.AnchorElement(href: url)
+          ..setAttribute('download', 'route.gpx')
+          ..click();
+        html.Url.revokeObjectUrl(url);
+        print('GPX file downloaded successfully');
+      } else if (exportFormat == 'json') {
+        final jsonContent = jsonEncode(
+          content,
+          toEncodable: (o) => o.toString(),
+        );
+        final bytes = utf8.encode(jsonContent);
+        final blob = html.Blob([bytes], 'application/json');
+        final url = html.Url.createObjectUrlFromBlob(blob);
+        final anchor = html.AnchorElement(href: url)
+          ..setAttribute('download', 'route.json')
+          ..click();
+        html.Url.revokeObjectUrl(url);
+        print('JSON file downloaded successfully');
+      }
+    } catch (e) {
+      print('Export error: $e');
+      rethrow;
+    }
   }
 
   List<LatLng> decodeValhallaShape(String encoded) {
@@ -132,7 +219,7 @@ class _MyHomePageState extends State<MyHomePage> {
                   height: 40,
                   child: const Icon(
                     Icons.location_on,
-                    color: Colors.red,
+                    color: Colors.orange,
                     size: 40,
                   ),
                 ),
@@ -150,13 +237,39 @@ class _MyHomePageState extends State<MyHomePage> {
         PopupMenuItem(
           child: const Text('Startovni bod trasy'),
           onTap: () {
-            startPointController.text =
-                '${coordinates.latitude.toStringAsFixed(4)}, ${coordinates.longitude.toStringAsFixed(4)}';
+            setState(() {
+              _startMarker = Marker(
+                point: coordinates,
+                width: 40,
+                height: 40,
+                child: const Icon(
+                  Icons.location_on,
+                  color: Colors.green,
+                  size: 40,
+                ),
+              );
+
+              startPointController.text =
+                  '${coordinates.latitude.toStringAsFixed(4)}, ${coordinates.longitude.toStringAsFixed(4)}';
+            });
           },
         ),
         PopupMenuItem(
           child: const Text('Cílový bod trasy'),
           onTap: () {
+            setState(() {
+              _endMarker = Marker(
+                point: coordinates,
+                width: 40,
+                height: 40,
+                child: const Icon(
+                  Icons.location_on,
+                  color: Colors.red,
+                  size: 40,
+                ),
+              );
+            });
+
             endPointController.text =
                 '${coordinates.latitude.toStringAsFixed(4)}, ${coordinates.longitude.toStringAsFixed(4)}';
           },
@@ -189,7 +302,14 @@ class _MyHomePageState extends State<MyHomePage> {
       drawer: NavigationDrawer(
         startPointController: startPointController,
         endPointController: endPointController,
-        onCalculateRoute: (String mode) => calc(mode),
+        onCalculateRoute: (String mode) async {
+          var route = await calc(mode);
+          return route;
+        },
+        export: (String mode) async {
+          await export(mode);
+        },
+        speedSettings: _speedSettings,
       ),
       body: Stack(
         children: [
@@ -212,6 +332,8 @@ class _MyHomePageState extends State<MyHomePage> {
                   userAgentPackageName: 'com.example.myapp',
                 ),
                 MarkerLayer(markers: _markers),
+                MarkerLayer(markers: [_startMarker]),
+                MarkerLayer(markers: [_endMarker]),
                 if (_routePoints.isNotEmpty)
                   PolylineLayer(
                     polylines: [
@@ -247,12 +369,16 @@ class NavigationDrawer extends StatefulWidget {
   final TextEditingController startPointController;
   final TextEditingController endPointController;
   final Function(String) onCalculateRoute;
+  final Function(String) export;
+  final SpeedSettings speedSettings;
 
   const NavigationDrawer({
     super.key,
     required this.startPointController,
     required this.endPointController,
     required this.onCalculateRoute,
+    required this.export,
+    required this.speedSettings,
   });
 
   @override
@@ -260,7 +386,25 @@ class NavigationDrawer extends StatefulWidget {
 }
 
 class _NavigationDrawerState extends State<NavigationDrawer> {
-  String? _selectedTransportMode = 'Automobil';
+  String? _selectedTransportMode = 'auto';
+  String _exportFormat = 'gpx';
+
+  final TextEditingController _timeController = TextEditingController();
+  final TextEditingController _kmController = TextEditingController();
+
+  @override
+  void initState() {
+    super.initState();
+    _timeController.text = '';
+    _kmController.text = '';
+  }
+
+  @override
+  void dispose() {
+    _timeController.dispose();
+    _kmController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) => Drawer(
@@ -331,11 +475,147 @@ class _NavigationDrawerState extends State<NavigationDrawer> {
             ],
           ),
         ),
+        const Divider(),
+        const Padding(
+          padding: EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+          child: Text(
+            'Rozšířená nastavení',
+            style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+          ),
+        ),
         ListTile(
-          title: const Text('Vypočítat trasu'),
-          onTap: () {
-            widget.onCalculateRoute(_selectedTransportMode ?? 'auto');
+          title: const Text('Průměrná rychlost chůze'),
+          subtitle: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Slider(
+                value: widget.speedSettings.walkingSpeed,
+                min: 1.0,
+                max: 10.0,
+                divisions: 90,
+                label:
+                    '${widget.speedSettings.walkingSpeed.toStringAsFixed(1)} km/h',
+                onChanged: (value) {
+                  setState(() {
+                    widget.speedSettings.walkingSpeed = value;
+                  });
+                },
+              ),
+              Text(
+                '${widget.speedSettings.walkingSpeed.toStringAsFixed(1)} km/h',
+                style: const TextStyle(fontSize: 14),
+              ),
+            ],
+          ),
+        ),
+        ListTile(
+          title: const Text('Průměrná rychlost kola'),
+          subtitle: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Slider(
+                value: widget.speedSettings.cyclingSpeed,
+                min: 10.0,
+                max: 50.0,
+                divisions: 40,
+                label:
+                    '${widget.speedSettings.cyclingSpeed.toStringAsFixed(1)} km/h',
+                onChanged: (value) {
+                  setState(() {
+                    widget.speedSettings.cyclingSpeed = value;
+                  });
+                },
+              ),
+              Text(
+                '${widget.speedSettings.cyclingSpeed.toStringAsFixed(1)} km/h',
+                style: const TextStyle(fontSize: 14),
+              ),
+            ],
+          ),
+        ),
+        const Divider(),
+        ListTile(
+          title: const Text(
+            'Vypočítat trasu',
+            style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+          ),
+          onTap: () async {
+            try {
+              var route = await widget.onCalculateRoute(
+                _selectedTransportMode ?? 'auto',
+              );
+              setState(() {
+                _timeController.text =
+                    '${(route['trip']['summary']['time'] / 60).toStringAsFixed(1)} min';
+                _kmController.text =
+                    '${(route['trip']['summary']['length']).toStringAsFixed(2)} km';
+              });
+            } catch (e) {
+              ScaffoldMessenger.of(
+                context,
+              ).showSnackBar(SnackBar(content: Text('Chyba: $e')));
+            }
           },
+        ),
+        const Divider(),
+        ListTile(
+          title: const Text(
+            'Délka trasy',
+            style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+          ),
+        ),
+        ListTile(
+          title: TextField(
+            controller: _timeController,
+            readOnly: true,
+            decoration: const InputDecoration(labelText: 'Čas'),
+          ),
+        ),
+        ListTile(
+          title: TextField(
+            controller: _kmController,
+            readOnly: true,
+            decoration: const InputDecoration(labelText: 'Vzdálenost'),
+          ),
+        ),
+        const Divider(),
+        ListTile(
+          title: const Text(
+            'Export formát',
+            style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
+          ),
+          subtitle: Column(
+            children: [
+              RadioListTile<String>(
+                title: const Text('GPX'),
+                value: 'gpx',
+                groupValue: _exportFormat,
+                onChanged: (value) {
+                  setState(() {
+                    _exportFormat = value ?? 'gpx';
+                  });
+                },
+              ),
+              RadioListTile<String>(
+                title: const Text('JSON'),
+                value: 'json',
+                groupValue: _exportFormat,
+                onChanged: (value) {
+                  setState(() {
+                    _exportFormat = value ?? 'gpx';
+                  });
+                },
+              ),
+            ],
+          ),
+        ),
+        ListTile(
+          title: ElevatedButton(
+            onPressed: () async {
+              await widget.export(_selectedTransportMode ?? 'auto');
+            },
+            child: Text('Exportovat trasu do ${_exportFormat.toUpperCase()}'),
+          ),
         ),
       ],
     ),

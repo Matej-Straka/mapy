@@ -8,8 +8,13 @@ enum ValhallaProfile { bicycle, pedestrian, auto }
 class ValhallaLocation {
   final double lat;
   final double lon;
+  final String format;
 
-  ValhallaLocation({required this.lat, required this.lon});
+  ValhallaLocation({
+    required this.lat,
+    required this.lon,
+    this.format = 'json',
+  });
 
   /// Create a ValhallaLocation from a comma-separated string (e.g., "49.066, 17.459")
   factory ValhallaLocation.fromString(String coordString) {
@@ -23,7 +28,7 @@ class ValhallaLocation {
     );
   }
 
-  Map<String, dynamic> toJson() => {"lat": lat, "lon": lon};
+  Map<String, dynamic> toJson() => {"lat": lat, "lon": lon, "format": format};
 }
 
 /// Main Valhalla service
@@ -45,11 +50,12 @@ class ValhallaService {
   }
 
   /// Send a route request
-  Future<Map<String, dynamic>> getRoute({
+  Future<dynamic> getRoute({
     required List<ValhallaLocation> locations,
     ValhallaProfile profile = ValhallaProfile.bicycle,
     Map<String, dynamic>? profileOptions,
     String units = 'km',
+    String format = 'json',
   }) async {
     final url = Uri.parse('$baseUrl/route');
 
@@ -58,6 +64,7 @@ class ValhallaService {
       "costing": _profileToString(profile),
       "costing_options": {_profileToString(profile): profileOptions ?? {}},
       "directions_options": {"units": units},
+      "format": format,
     };
 
     final response = await http.post(
@@ -67,7 +74,11 @@ class ValhallaService {
     );
 
     if (response.statusCode == 200) {
-      return jsonDecode(response.body);
+      if (format == 'gpx') {
+        return response.body; // Return raw GPX string
+      } else {
+        return jsonDecode(response.body); // Return JSON
+      }
     } else {
       throw Exception(
         "Valhalla request failed: ${response.statusCode} ${response.body}",
