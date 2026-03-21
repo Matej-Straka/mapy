@@ -351,6 +351,69 @@ class _MyHomePageState extends State<MyHomePage> {
     );
   }
 
+  String _modeLabel(String mode) {
+    switch (mode) {
+      case 'auto':
+        return 'auto';
+      case 'bicycle':
+        return 'kolo';
+      case 'pedestrian':
+        return 'chuze';
+      default:
+        return mode;
+    }
+  }
+
+  String _formatRouteError(String mode, Object error) {
+    final message = error.toString();
+    final modeText = _modeLabel(mode);
+
+    Map<String, dynamic>? payload;
+    final jsonStart = message.indexOf('{');
+    final jsonEnd = message.lastIndexOf('}');
+    if (jsonStart != -1 && jsonEnd > jsonStart) {
+      final jsonPart = message.substring(jsonStart, jsonEnd + 1);
+      try {
+        final decoded = jsonDecode(jsonPart);
+        if (decoded is Map<String, dynamic>) {
+          payload = decoded;
+        }
+      } catch (_) {
+        payload = null;
+      }
+    }
+
+    final errorCode = payload?['error_code']?.toString();
+    final serverError =
+        (payload?['error'] ?? payload?['status'] ?? '').toString().trim();
+
+    if (errorCode == '154' || message.contains('Path distance exceeds')) {
+      return 'Pro mod "$modeText" je trasa moc dlouha. Zkus blizsi body.';
+    }
+
+    if (message.contains('Invalid coordinate format')) {
+      return 'Pro mod "$modeText" je spatny format souradnic. Pouzij format: 49.1234, 17.1234';
+    }
+
+    if (errorCode == '170' || errorCode == '171') {
+      return 'Pro mod "$modeText" nelze najit vhodnou cestu v blizkosti nektereho bodu. Posun body blize k silnici nebo ceste.';
+    }
+
+    if (errorCode == '442') {
+      return 'Pro mod "$modeText" nejsou nektere body dosažitelne. Zkus jinou kombinaci bodu.';
+    }
+
+    if (serverError.isNotEmpty) {
+      return 'Chyba pro mod "$modeText": $serverError${errorCode != null ? ' (kod $errorCode)' : ''}';
+    }
+
+    if (message.contains('400')) {
+      return 'Pro mod "$modeText" server odmitl pozadavek (400). Zkontroluj body a zkus to znovu.';
+    }
+
+    return 'Chyba pro mod "$modeText": $message';
+  }
+
   calc(String mode) async {
     final valhalla = ValhallaService();
 
@@ -563,17 +626,52 @@ class _MyHomePageState extends State<MyHomePage> {
             if (!mounted) {
               return;
             }
+            final errorMessage = _formatRouteError(_selectedTransportMode, e);
             ScaffoldMessenger.of(
               context,
-            ).showSnackBar(SnackBar(content: Text('Chyba: $e')));
+            ).showSnackBar(SnackBar(content: Text(errorMessage)));
           }
         },
         export: () async {
-          await export(_selectedTransportMode, exportFormat: _exportFormat);
+          try {
+            await export(_selectedTransportMode, exportFormat: _exportFormat);
+          } catch (e) {
+            if (!mounted) {
+              return;
+            }
+            final errorMessage = _formatRouteError(_selectedTransportMode, e);
+            ScaffoldMessenger.of(
+              context,
+            ).showSnackBar(SnackBar(content: Text(errorMessage)));
+          }
         },
         speedSettings: _speedSettings,
         onSpeedSettingsChanged: () {
           setState(() {});
+        },
+        onReset: () {
+          setState(() {
+            startPointController.clear();
+            endPointController.clear();
+            _timeController.clear();
+            _kmController.clear();
+            _routePoints = [];
+            _selectedTransportMode = 'auto';
+            _exportFormat = 'gpx';
+            _speedSettings = SpeedSettings();
+            _startMarker = Marker(
+              point: LatLng(0, 0),
+              width: 40,
+              height: 40,
+              child: const Icon(Icons.location_on, color: Colors.green, size: 40),
+            );
+            _endMarker = Marker(
+              point: LatLng(0, 0),
+              width: 40,
+              height: 40,
+              child: const Icon(Icons.location_on, color: Colors.red, size: 40),
+            );
+          });
         },
       ),
       body: Stack(
@@ -645,6 +743,7 @@ class NavigationDrawer extends StatelessWidget {
   final Future<void> Function() export;
   final SpeedSettings speedSettings;
   final VoidCallback onSpeedSettingsChanged;
+  final VoidCallback onReset;
 
   const NavigationDrawer({
     super.key,
@@ -660,44 +759,78 @@ class NavigationDrawer extends StatelessWidget {
     required this.export,
     required this.speedSettings,
     required this.onSpeedSettingsChanged,
+    required this.onReset,
   });
 
   @override
   Widget build(BuildContext context) => Drawer(
     child: ListView(
-      // Important: Remove any padding from the ListView.
-      padding: EdgeInsets.zero,
+      padding: const EdgeInsets.fromLTRB(12, 0, 12, 20),
       children: [
-        const DrawerHeader(
-          decoration: BoxDecoration(color: Colors.blue),
-          child: Text('Navigace'),
+        DrawerHeader(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              colors: [Colors.blue.shade700, Colors.cyan.shade600],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ),
+            borderRadius: BorderRadius.circular(16),
+          ),
+          child: const Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisAlignment: MainAxisAlignment.end,
+            children: [
+              Icon(Icons.map, color: Colors.white, size: 32),
+              SizedBox(height: 8),
+              Text(
+                'Navigace',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 22,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
+          ),
         ),
-        ListTile(
-          title: TextField(
-            controller: startPointController,
-            decoration: const InputDecoration(
-              labelText: 'Počáteční bod trasy: ',
+        Card(
+          elevation: 1,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+          child: Padding(
+            padding: const EdgeInsets.all(12),
+            child: Column(
+              children: [
+                TextField(
+                  controller: startPointController,
+                  decoration: const InputDecoration(
+                    labelText: 'Počáteční bod trasy',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+                const SizedBox(height: 10),
+                TextField(
+                  controller: endPointController,
+                  decoration: const InputDecoration(
+                    labelText: 'Koncový bod trasy',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+              ],
             ),
           ),
-          onTap: () {
-            // Update the state of the app.
-            // ...
-          },
         ),
-        ListTile(
-          title: TextField(
-            controller: endPointController,
-            decoration: const InputDecoration(labelText: 'Koncový bod trasy: '),
-          ),
-          onTap: () {
-            // Update the state of the app.
-            // ...
-          },
-        ),
-        ListTile(
-          title: const Text('Mód přepravy:'),
-          subtitle: Column(
+        const SizedBox(height: 10),
+        Card(
+          elevation: 1,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+          child: Column(
             children: [
+              const ListTile(
+                title: Text(
+                  'Mód přepravy',
+                  style: TextStyle(fontWeight: FontWeight.w700),
+                ),
+              ),
               RadioListTile<String>(
                 title: const Text('Automobil'),
                 value: 'auto',
@@ -731,101 +864,136 @@ class NavigationDrawer extends StatelessWidget {
             ],
           ),
         ),
-        const Divider(),
-        const Padding(
-          padding: EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
-          child: Text(
-            'Rozšířená nastavení',
-            style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+        const SizedBox(height: 10),
+        Card(
+          elevation: 1,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+          child: Padding(
+            padding: const EdgeInsets.all(12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Rozšířená nastavení',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 10),
+                const Text('Průměrná rychlost chůze'),
+                Slider(
+                  value: speedSettings.walkingSpeed,
+                  min: 1.0,
+                  max: 10.0,
+                  divisions: 90,
+                  label:
+                      '${speedSettings.walkingSpeed.toStringAsFixed(1)} km/h',
+                  onChanged: (value) {
+                    speedSettings.walkingSpeed = value;
+                    onSpeedSettingsChanged();
+                  },
+                ),
+                Text('${speedSettings.walkingSpeed.toStringAsFixed(1)} km/h'),
+                const SizedBox(height: 8),
+                const Text('Průměrná rychlost kola'),
+                Slider(
+                  value: speedSettings.cyclingSpeed,
+                  min: 10.0,
+                  max: 50.0,
+                  divisions: 40,
+                  label:
+                      '${speedSettings.cyclingSpeed.toStringAsFixed(1)} km/h',
+                  onChanged: (value) {
+                    speedSettings.cyclingSpeed = value;
+                    onSpeedSettingsChanged();
+                  },
+                ),
+                Text('${speedSettings.cyclingSpeed.toStringAsFixed(1)} km/h'),
+              ],
+            ),
           ),
         ),
-        ListTile(
-          title: const Text('Průměrná rychlost chůze'),
-          subtitle: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Slider(
-                value: speedSettings.walkingSpeed,
-                min: 1.0,
-                max: 10.0,
-                divisions: 90,
-                label:
-                    '${speedSettings.walkingSpeed.toStringAsFixed(1)} km/h',
-                onChanged: (value) {
-                  speedSettings.walkingSpeed = value;
-                  onSpeedSettingsChanged();
+        const SizedBox(height: 10),
+        Row(
+          children: [
+            Expanded(
+              child: ElevatedButton.icon(
+                style: ElevatedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+                onPressed: () async {
+                  await onCalculateRoute();
                 },
+                icon: const Icon(Icons.route),
+                label: const Text('Vypočítat trasu'),
               ),
-              Text(
-                '${speedSettings.walkingSpeed.toStringAsFixed(1)} km/h',
-                style: const TextStyle(fontSize: 14),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: OutlinedButton.icon(
+                style: OutlinedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+                onPressed: onReset,
+                icon: const Icon(Icons.refresh),
+                label: const Text('Reset'),
               ),
-            ],
+            ),
+          ],
+        ),
+        const SizedBox(height: 10),
+        Card(
+          elevation: 1,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+          child: Padding(
+            padding: const EdgeInsets.all(12),
+            child: Column(
+              children: [
+                const Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    'Délka trasy',
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                  ),
+                ),
+                const SizedBox(height: 10),
+                TextField(
+                  controller: timeController,
+                  readOnly: true,
+                  decoration: const InputDecoration(
+                    labelText: 'Čas',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+                const SizedBox(height: 10),
+                TextField(
+                  controller: kmController,
+                  readOnly: true,
+                  decoration: const InputDecoration(
+                    labelText: 'Vzdálenost',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
-        ListTile(
-          title: const Text('Průměrná rychlost kola'),
-          subtitle: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+        const SizedBox(height: 10),
+        Card(
+          elevation: 1,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+          child: Column(
             children: [
-              Slider(
-                value: speedSettings.cyclingSpeed,
-                min: 10.0,
-                max: 50.0,
-                divisions: 40,
-                label:
-                    '${speedSettings.cyclingSpeed.toStringAsFixed(1)} km/h',
-                onChanged: (value) {
-                  speedSettings.cyclingSpeed = value;
-                  onSpeedSettingsChanged();
-                },
+              const ListTile(
+                title: Text(
+                  'Export formát',
+                  style: TextStyle(fontWeight: FontWeight.w700),
+                ),
               ),
-              Text(
-                '${speedSettings.cyclingSpeed.toStringAsFixed(1)} km/h',
-                style: const TextStyle(fontSize: 14),
-              ),
-            ],
-          ),
-        ),
-        const Divider(),
-        ListTile(
-          title: const Text(
-            'Vypočítat trasu',
-            style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-          ),
-          onTap: () async {
-            await onCalculateRoute();
-          },
-        ),
-        const Divider(),
-        ListTile(
-          title: const Text(
-            'Délka trasy',
-            style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-          ),
-        ),
-        ListTile(
-          title: TextField(
-            controller: timeController,
-            readOnly: true,
-            decoration: const InputDecoration(labelText: 'Čas'),
-          ),
-        ),
-        ListTile(
-          title: TextField(
-            controller: kmController,
-            readOnly: true,
-            decoration: const InputDecoration(labelText: 'Vzdálenost'),
-          ),
-        ),
-        const Divider(),
-        ListTile(
-          title: const Text(
-            'Export formát',
-            style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
-          ),
-          subtitle: Column(
-            children: [
               RadioListTile<String>(
                 title: const Text('GPX'),
                 value: 'gpx',
@@ -849,14 +1017,18 @@ class NavigationDrawer extends StatelessWidget {
             ],
           ),
         ),
-        ListTile(
-          title: ElevatedButton(
-            onPressed: () async {
-              await export();
-            },
-            child: Text('Exportovat trasu do ${exportFormat.toUpperCase()}'),
+        const SizedBox(height: 10),
+        ElevatedButton.icon(
+          style: ElevatedButton.styleFrom(
+            padding: const EdgeInsets.symmetric(vertical: 14),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
           ),
-        ),
+          onPressed: () async {
+            await export();
+          },
+          icon: const Icon(Icons.download),
+          label: Text('Exportovat trasu do ${exportFormat.toUpperCase()}'),
+          ),
       ],
     ),
   );
