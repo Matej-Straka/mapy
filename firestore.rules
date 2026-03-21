@@ -1,0 +1,8 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /shared_markers/{markerId} {
+      allow read, write: if true;
+    }
+  }
+}

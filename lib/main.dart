@@ -1,9 +1,10 @@
 import 'dart:convert';
+import 'dart:async';
 
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'firebase_options.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'valhalla_service.dart';
@@ -17,11 +18,39 @@ class SpeedSettings {
   SpeedSettings({this.walkingSpeed = 5.0, this.cyclingSpeed = 22.0});
 }
 
-await Firebase.initializeApp(
-    options: DefaultFirebaseOptions.currentPlatform,
-);
+class SharedMarkerData {
+  final String id;
+  final String name;
+  final double latitude;
+  final double longitude;
 
-void main() {
+  const SharedMarkerData({
+    required this.id,
+    required this.name,
+    required this.latitude,
+    required this.longitude,
+  });
+
+  LatLng get point => LatLng(latitude, longitude);
+
+  factory SharedMarkerData.fromDoc(DocumentSnapshot<Map<String, dynamic>> doc) {
+    final data = doc.data() ?? <String, dynamic>{};
+    return SharedMarkerData(
+      id: doc.id,
+      name: (data['name'] as String?)?.trim().isNotEmpty == true
+          ? (data['name'] as String)
+          : 'Marker',
+      latitude: (data['latitude'] as num?)?.toDouble() ?? 0.0,
+      longitude: (data['longitude'] as num?)?.toDouble() ?? 0.0,
+    );
+  }
+}
+
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await Firebase.initializeApp(
+    options: DefaultFirebaseOptions.currentPlatform,
+  );
   html.document.onContextMenu.listen((event) => event.preventDefault());
   runApp(const MyApp());
 }
@@ -76,7 +105,13 @@ class MyHomePage extends StatefulWidget {
 }
 
 class _MyHomePageState extends State<MyHomePage> {
-  final List<Marker> _markers = [];
+  final List<SharedMarkerData> _sharedMarkers = [];
+  StreamSubscription<QuerySnapshot<Map<String, dynamic>>>?
+  _sharedMarkersSubscription;
+
+  CollectionReference<Map<String, dynamic>> get _sharedMarkersCollection =>
+      FirebaseFirestore.instance.collection('shared_markers');
+
   late Marker _startMarker = Marker(
     point: LatLng(0, 0),
     width: 40,
@@ -94,6 +129,11 @@ class _MyHomePageState extends State<MyHomePage> {
 
   final TextEditingController startPointController = TextEditingController();
   final TextEditingController endPointController = TextEditingController();
+  final TextEditingController _timeController = TextEditingController();
+  final TextEditingController _kmController = TextEditingController();
+
+  String _selectedTransportMode = 'auto';
+  String _exportFormat = 'gpx';
 
   late SpeedSettings _speedSettings;
 
@@ -101,6 +141,214 @@ class _MyHomePageState extends State<MyHomePage> {
   void initState() {
     super.initState();
     _speedSettings = SpeedSettings();
+    _listenToSharedMarkers();
+  }
+
+  @override
+  void dispose() {
+    _sharedMarkersSubscription?.cancel();
+    startPointController.dispose();
+    endPointController.dispose();
+    _timeController.dispose();
+    _kmController.dispose();
+    super.dispose();
+  }
+
+  void _listenToSharedMarkers() {
+    _sharedMarkersSubscription = _sharedMarkersCollection
+        .orderBy('createdAt', descending: false)
+        .snapshots()
+        .listen(
+          (snapshot) {
+            if (!mounted) {
+              return;
+            }
+            setState(() {
+              _sharedMarkers
+                ..clear()
+                ..addAll(
+                  snapshot.docs.map(SharedMarkerData.fromDoc).where(
+                    (marker) => marker.latitude != 0 || marker.longitude != 0,
+                  ),
+                );
+            });
+          },
+          onError: (error) {
+            if (!mounted) {
+              return;
+            }
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text('Nepodarilo se nacist markery: $error')),
+            );
+          },
+        );
+  }
+
+  Future<String?> _showMarkerNameDialog({
+    required String title,
+    required String actionLabel,
+    String initialValue = '',
+  }) async {
+    final controller = TextEditingController(text: initialValue);
+
+    return showDialog<String>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: Text(title),
+          content: TextField(
+            controller: controller,
+            autofocus: true,
+            decoration: const InputDecoration(labelText: 'Nazev markeru'),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Zrusit'),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                final value = controller.text.trim();
+                if (value.isEmpty) {
+                  return;
+                }
+                Navigator.of(context).pop(value);
+              },
+              child: Text(actionLabel),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Future<void> _addSharedMarker(LatLng coordinates) async {
+    final markerName = await _showMarkerNameDialog(
+      title: 'Pojmenovat marker',
+      actionLabel: 'Ulozit',
+      initialValue: 'Bod',
+    );
+
+    if (markerName == null) {
+      return;
+    }
+
+    await _sharedMarkersCollection.add({
+      'name': markerName,
+      'latitude': coordinates.latitude,
+      'longitude': coordinates.longitude,
+      'createdAt': FieldValue.serverTimestamp(),
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
+
+    if (!mounted) {
+      return;
+    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Marker "$markerName" byl ulozen')),
+    );
+  }
+
+  Future<void> _renameSharedMarker(SharedMarkerData marker) async {
+    final renamed = await _showMarkerNameDialog(
+      title: 'Prejmenovat marker',
+      actionLabel: 'Ulozit',
+      initialValue: marker.name,
+    );
+
+    if (renamed == null || renamed == marker.name) {
+      return;
+    }
+
+    await _sharedMarkersCollection.doc(marker.id).update({
+      'name': renamed,
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
+  }
+
+  Future<void> _deleteSharedMarker(SharedMarkerData marker) async {
+    await _sharedMarkersCollection.doc(marker.id).delete();
+
+    if (!mounted) {
+      return;
+    }
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text('Marker "${marker.name}" byl smazan')));
+  }
+
+  Future<void> _showSharedMarkerActions(SharedMarkerData marker) async {
+    await showModalBottomSheet<void>(
+      context: context,
+      builder: (context) {
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ListTile(
+                title: Text(marker.name),
+                subtitle: Text(
+                  '${marker.latitude.toStringAsFixed(5)}, ${marker.longitude.toStringAsFixed(5)}',
+                ),
+              ),
+              ListTile(
+                leading: const Icon(Icons.drive_file_rename_outline),
+                title: const Text('Prejmenovat'),
+                onTap: () async {
+                  Navigator.of(context).pop();
+                  await _renameSharedMarker(marker);
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.delete_outline, color: Colors.red),
+                title: const Text('Smazat marker'),
+                onTap: () async {
+                  Navigator.of(context).pop();
+                  await _deleteSharedMarker(marker);
+                },
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Marker _buildSharedMarker(SharedMarkerData marker) {
+    return Marker(
+      point: marker.point,
+      width: 120,
+      height: 62,
+      child: GestureDetector(
+        onTap: () => _showSharedMarkerActions(marker),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.location_on, color: Colors.orange, size: 36),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(6),
+                boxShadow: const [
+                  BoxShadow(
+                    color: Colors.black26,
+                    blurRadius: 2,
+                    offset: Offset(0, 1),
+                  ),
+                ],
+              ),
+              child: Text(
+                marker.name,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontSize: 12),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   calc(String mode) async {
@@ -164,7 +412,7 @@ class _MyHomePageState extends State<MyHomePage> {
         final bytes = utf8.encode(content);
         final blob = html.Blob([bytes], 'application/gpx+xml');
         final url = html.Url.createObjectUrlFromBlob(blob);
-        final anchor = html.AnchorElement(href: url)
+        html.AnchorElement(href: url)
           ..setAttribute('download', 'route.gpx')
           ..click();
         html.Url.revokeObjectUrl(url);
@@ -177,7 +425,7 @@ class _MyHomePageState extends State<MyHomePage> {
         final bytes = utf8.encode(jsonContent);
         final blob = html.Blob([bytes], 'application/json');
         final url = html.Url.createObjectUrlFromBlob(blob);
-        final anchor = html.AnchorElement(href: url)
+        html.AnchorElement(href: url)
           ..setAttribute('download', 'route.json')
           ..click();
         html.Url.revokeObjectUrl(url);
@@ -216,28 +464,8 @@ class _MyHomePageState extends State<MyHomePage> {
       items: [
         PopupMenuItem(
           child: const Text('Add Marker'),
-          onTap: () {
-            setState(() {
-              _markers.add(
-                Marker(
-                  point: coordinates,
-                  width: 40,
-                  height: 40,
-                  child: const Icon(
-                    Icons.location_on,
-                    color: Colors.orange,
-                    size: 40,
-                  ),
-                ),
-              );
-            });
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text(
-                  'Marker added at ${coordinates.latitude.toStringAsFixed(4)}, ${coordinates.longitude.toStringAsFixed(4)}',
-                ),
-              ),
-            );
+          onTap: () async {
+            await _addSharedMarker(coordinates);
           },
         ),
         PopupMenuItem(
@@ -308,14 +536,45 @@ class _MyHomePageState extends State<MyHomePage> {
       drawer: NavigationDrawer(
         startPointController: startPointController,
         endPointController: endPointController,
-        onCalculateRoute: (String mode) async {
-          var route = await calc(mode);
-          return route;
+        selectedTransportMode: _selectedTransportMode,
+        exportFormat: _exportFormat,
+        timeController: _timeController,
+        kmController: _kmController,
+        onTransportModeChanged: (value) {
+          setState(() {
+            _selectedTransportMode = value;
+          });
         },
-        export: (String mode) async {
-          await export(mode);
+        onExportFormatChanged: (value) {
+          setState(() {
+            _exportFormat = value;
+          });
+        },
+        onCalculateRoute: () async {
+          try {
+            var route = await calc(_selectedTransportMode);
+            setState(() {
+              _timeController.text =
+                  '${(route['trip']['summary']['time'] / 60).toStringAsFixed(1)} min';
+              _kmController.text =
+                  '${(route['trip']['summary']['length']).toStringAsFixed(2)} km';
+            });
+          } catch (e) {
+            if (!mounted) {
+              return;
+            }
+            ScaffoldMessenger.of(
+              context,
+            ).showSnackBar(SnackBar(content: Text('Chyba: $e')));
+          }
+        },
+        export: () async {
+          await export(_selectedTransportMode, exportFormat: _exportFormat);
         },
         speedSettings: _speedSettings,
+        onSpeedSettingsChanged: () {
+          setState(() {});
+        },
       ),
       body: Stack(
         children: [
@@ -337,7 +596,9 @@ class _MyHomePageState extends State<MyHomePage> {
                   urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
                   userAgentPackageName: 'com.example.myapp',
                 ),
-                MarkerLayer(markers: _markers),
+                MarkerLayer(
+                  markers: _sharedMarkers.map(_buildSharedMarker).toList(),
+                ),
                 MarkerLayer(markers: [_startMarker]),
                 MarkerLayer(markers: [_endMarker]),
                 if (_routePoints.isNotEmpty)
@@ -371,46 +632,35 @@ class _MyHomePageState extends State<MyHomePage> {
   }
 }
 
-class NavigationDrawer extends StatefulWidget {
+class NavigationDrawer extends StatelessWidget {
   final TextEditingController startPointController;
   final TextEditingController endPointController;
-  final Function(String) onCalculateRoute;
-  final Function(String) export;
+  final TextEditingController timeController;
+  final TextEditingController kmController;
+  final String selectedTransportMode;
+  final String exportFormat;
+  final ValueChanged<String> onTransportModeChanged;
+  final ValueChanged<String> onExportFormatChanged;
+  final Future<void> Function() onCalculateRoute;
+  final Future<void> Function() export;
   final SpeedSettings speedSettings;
+  final VoidCallback onSpeedSettingsChanged;
 
   const NavigationDrawer({
     super.key,
     required this.startPointController,
     required this.endPointController,
+    required this.timeController,
+    required this.kmController,
+    required this.selectedTransportMode,
+    required this.exportFormat,
+    required this.onTransportModeChanged,
+    required this.onExportFormatChanged,
     required this.onCalculateRoute,
     required this.export,
     required this.speedSettings,
+    required this.onSpeedSettingsChanged,
   });
-
-  @override
-  State<NavigationDrawer> createState() => _NavigationDrawerState();
-}
-
-class _NavigationDrawerState extends State<NavigationDrawer> {
-  String? _selectedTransportMode = 'auto';
-  String _exportFormat = 'gpx';
-
-  final TextEditingController _timeController = TextEditingController();
-  final TextEditingController _kmController = TextEditingController();
-
-  @override
-  void initState() {
-    super.initState();
-    _timeController.text = '';
-    _kmController.text = '';
-  }
-
-  @override
-  void dispose() {
-    _timeController.dispose();
-    _kmController.dispose();
-    super.dispose();
-  }
 
   @override
   Widget build(BuildContext context) => Drawer(
@@ -424,7 +674,7 @@ class _NavigationDrawerState extends State<NavigationDrawer> {
         ),
         ListTile(
           title: TextField(
-            controller: widget.startPointController,
+            controller: startPointController,
             decoration: const InputDecoration(
               labelText: 'Počáteční bod trasy: ',
             ),
@@ -436,7 +686,7 @@ class _NavigationDrawerState extends State<NavigationDrawer> {
         ),
         ListTile(
           title: TextField(
-            controller: widget.endPointController,
+            controller: endPointController,
             decoration: const InputDecoration(labelText: 'Koncový bod trasy: '),
           ),
           onTap: () {
@@ -451,31 +701,31 @@ class _NavigationDrawerState extends State<NavigationDrawer> {
               RadioListTile<String>(
                 title: const Text('Automobil'),
                 value: 'auto',
-                groupValue: _selectedTransportMode,
+                groupValue: selectedTransportMode,
                 onChanged: (value) {
-                  setState(() {
-                    _selectedTransportMode = value;
-                  });
+                  if (value != null) {
+                    onTransportModeChanged(value);
+                  }
                 },
               ),
               RadioListTile<String>(
                 title: const Text('Kolo'),
                 value: 'bicycle',
-                groupValue: _selectedTransportMode,
+                groupValue: selectedTransportMode,
                 onChanged: (value) {
-                  setState(() {
-                    _selectedTransportMode = value;
-                  });
+                  if (value != null) {
+                    onTransportModeChanged(value);
+                  }
                 },
               ),
               RadioListTile<String>(
                 title: const Text('Chůze'),
                 value: 'pedestrian',
-                groupValue: _selectedTransportMode,
+                groupValue: selectedTransportMode,
                 onChanged: (value) {
-                  setState(() {
-                    _selectedTransportMode = value;
-                  });
+                  if (value != null) {
+                    onTransportModeChanged(value);
+                  }
                 },
               ),
             ],
@@ -495,20 +745,19 @@ class _NavigationDrawerState extends State<NavigationDrawer> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Slider(
-                value: widget.speedSettings.walkingSpeed,
+                value: speedSettings.walkingSpeed,
                 min: 1.0,
                 max: 10.0,
                 divisions: 90,
                 label:
-                    '${widget.speedSettings.walkingSpeed.toStringAsFixed(1)} km/h',
+                    '${speedSettings.walkingSpeed.toStringAsFixed(1)} km/h',
                 onChanged: (value) {
-                  setState(() {
-                    widget.speedSettings.walkingSpeed = value;
-                  });
+                  speedSettings.walkingSpeed = value;
+                  onSpeedSettingsChanged();
                 },
               ),
               Text(
-                '${widget.speedSettings.walkingSpeed.toStringAsFixed(1)} km/h',
+                '${speedSettings.walkingSpeed.toStringAsFixed(1)} km/h',
                 style: const TextStyle(fontSize: 14),
               ),
             ],
@@ -520,20 +769,19 @@ class _NavigationDrawerState extends State<NavigationDrawer> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Slider(
-                value: widget.speedSettings.cyclingSpeed,
+                value: speedSettings.cyclingSpeed,
                 min: 10.0,
                 max: 50.0,
                 divisions: 40,
                 label:
-                    '${widget.speedSettings.cyclingSpeed.toStringAsFixed(1)} km/h',
+                    '${speedSettings.cyclingSpeed.toStringAsFixed(1)} km/h',
                 onChanged: (value) {
-                  setState(() {
-                    widget.speedSettings.cyclingSpeed = value;
-                  });
+                  speedSettings.cyclingSpeed = value;
+                  onSpeedSettingsChanged();
                 },
               ),
               Text(
-                '${widget.speedSettings.cyclingSpeed.toStringAsFixed(1)} km/h',
+                '${speedSettings.cyclingSpeed.toStringAsFixed(1)} km/h',
                 style: const TextStyle(fontSize: 14),
               ),
             ],
@@ -546,21 +794,7 @@ class _NavigationDrawerState extends State<NavigationDrawer> {
             style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
           ),
           onTap: () async {
-            try {
-              var route = await widget.onCalculateRoute(
-                _selectedTransportMode ?? 'auto',
-              );
-              setState(() {
-                _timeController.text =
-                    '${(route['trip']['summary']['time'] / 60).toStringAsFixed(1)} min';
-                _kmController.text =
-                    '${(route['trip']['summary']['length']).toStringAsFixed(2)} km';
-              });
-            } catch (e) {
-              ScaffoldMessenger.of(
-                context,
-              ).showSnackBar(SnackBar(content: Text('Chyba: $e')));
-            }
+            await onCalculateRoute();
           },
         ),
         const Divider(),
@@ -572,14 +806,14 @@ class _NavigationDrawerState extends State<NavigationDrawer> {
         ),
         ListTile(
           title: TextField(
-            controller: _timeController,
+            controller: timeController,
             readOnly: true,
             decoration: const InputDecoration(labelText: 'Čas'),
           ),
         ),
         ListTile(
           title: TextField(
-            controller: _kmController,
+            controller: kmController,
             readOnly: true,
             decoration: const InputDecoration(labelText: 'Vzdálenost'),
           ),
@@ -595,21 +829,21 @@ class _NavigationDrawerState extends State<NavigationDrawer> {
               RadioListTile<String>(
                 title: const Text('GPX'),
                 value: 'gpx',
-                groupValue: _exportFormat,
+                groupValue: exportFormat,
                 onChanged: (value) {
-                  setState(() {
-                    _exportFormat = value ?? 'gpx';
-                  });
+                  if (value != null) {
+                    onExportFormatChanged(value);
+                  }
                 },
               ),
               RadioListTile<String>(
                 title: const Text('JSON'),
                 value: 'json',
-                groupValue: _exportFormat,
+                groupValue: exportFormat,
                 onChanged: (value) {
-                  setState(() {
-                    _exportFormat = value ?? 'gpx';
-                  });
+                  if (value != null) {
+                    onExportFormatChanged(value);
+                  }
                 },
               ),
             ],
@@ -618,9 +852,9 @@ class _NavigationDrawerState extends State<NavigationDrawer> {
         ListTile(
           title: ElevatedButton(
             onPressed: () async {
-              await widget.export(_selectedTransportMode ?? 'auto');
+              await export();
             },
-            child: Text('Exportovat trasu do ${_exportFormat.toUpperCase()}'),
+            child: Text('Exportovat trasu do ${exportFormat.toUpperCase()}'),
           ),
         ),
       ],
