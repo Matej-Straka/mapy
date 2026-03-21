@@ -1,5 +1,7 @@
 import 'dart:convert';
 
+import 'package:firebase_core/firebase_core.dart';
+import 'firebase_options.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_map/flutter_map.dart';
@@ -14,6 +16,10 @@ class SpeedSettings {
 
   SpeedSettings({this.walkingSpeed = 5.0, this.cyclingSpeed = 22.0});
 }
+
+await Firebase.initializeApp(
+    options: DefaultFirebaseOptions.currentPlatform,
+);
 
 void main() {
   html.document.onContextMenu.listen((event) => event.preventDefault());
