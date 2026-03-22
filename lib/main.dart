@@ -62,7 +62,7 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Flutter Demo',
+      title: 'Mapy',
       theme: ThemeData(
         // This is the theme of your application.
         //
@@ -178,7 +178,7 @@ class _MyHomePageState extends State<MyHomePage> {
               return;
             }
             ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text('Nepodarilo se nacist markery: $error')),
+              SnackBar(content: Text('Nepodarilo se nacist uložené body: $error')),
             );
           },
         );
@@ -199,7 +199,7 @@ class _MyHomePageState extends State<MyHomePage> {
           content: TextField(
             controller: controller,
             autofocus: true,
-            decoration: const InputDecoration(labelText: 'Nazev markeru'),
+            decoration: const InputDecoration(labelText: 'Nazev bodu'),
           ),
           actions: [
             TextButton(
@@ -224,7 +224,7 @@ class _MyHomePageState extends State<MyHomePage> {
 
   Future<void> _addSharedMarker(LatLng coordinates) async {
     final markerName = await _showMarkerNameDialog(
-      title: 'Pojmenovat marker',
+      title: 'Pojmenovat bod',
       actionLabel: 'Ulozit',
       initialValue: 'Bod',
     );
@@ -245,13 +245,13 @@ class _MyHomePageState extends State<MyHomePage> {
       return;
     }
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Marker "$markerName" byl ulozen')),
+      SnackBar(content: Text('Bod "$markerName" byl ulozen')),
     );
   }
 
   Future<void> _renameSharedMarker(SharedMarkerData marker) async {
     final renamed = await _showMarkerNameDialog(
-      title: 'Prejmenovat marker',
+      title: 'Prejmenovat bod',
       actionLabel: 'Ulozit',
       initialValue: marker.name,
     );
@@ -274,7 +274,7 @@ class _MyHomePageState extends State<MyHomePage> {
     }
     ScaffoldMessenger.of(
       context,
-    ).showSnackBar(SnackBar(content: Text('Marker "${marker.name}" byl smazan')));
+    ).showSnackBar(SnackBar(content: Text('Bod "${marker.name}" byl smazan')));
   }
 
   Future<void> _showSharedMarkerActions(SharedMarkerData marker) async {
@@ -301,7 +301,7 @@ class _MyHomePageState extends State<MyHomePage> {
               ),
               ListTile(
                 leading: const Icon(Icons.delete_outline, color: Colors.red),
-                title: const Text('Smazat marker'),
+                title: const Text('Smazat bod'),
                 onTap: () async {
                   Navigator.of(context).pop();
                   await _deleteSharedMarker(marker);
@@ -526,7 +526,7 @@ class _MyHomePageState extends State<MyHomePage> {
       ),
       items: [
         PopupMenuItem(
-          child: const Text('Add Marker'),
+          child: const Text('Přidat bod'),
           onTap: () async {
             await _addSharedMarker(coordinates);
           },
@@ -569,18 +569,6 @@ class _MyHomePageState extends State<MyHomePage> {
 
             endPointController.text =
                 '${coordinates.latitude.toStringAsFixed(4)}, ${coordinates.longitude.toStringAsFixed(4)}';
-          },
-        ),
-        PopupMenuItem(
-          child: const Text('Share Location'),
-          onTap: () {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text(
-                  'Location: ${coordinates.latitude}, ${coordinates.longitude}',
-                ),
-              ),
-            );
           },
         ),
       ],
